@@ -1,0 +1,25 @@
+# Core dependencies
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+python-multipart==0.0.9
+
+# PDF Processing
+PyMuPDF==1.24.5
+PyPDF2==3.0.1
+
+# AI/OpenAI
+openai==1.35.7
+
+# Database
+sqlalchemy==2.0.30
+
+# Environment variables
+python-dotenv==1.0.1
+
+# CORS support
+python-jose[cryptography]==3.3.0
+
+# Additional utilities
+pydantic==2.7.4
+pydantic-settings==2.3.4
+
