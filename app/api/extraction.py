@@ -52,12 +52,14 @@ def extract_text_from_pages(
         raise HTTPException(status_code=400, detail="Start page must be less than or equal to end page")
     
     try:
-        # Extract text using PDF service
+        # Extract text using PDF service with OCR language support
         pdf_service = PDFService()
         extracted_text = pdf_service.extract_text_from_pages(
             textbook.file_path,
             page_range.start_page,
-            page_range.end_page
+            page_range.end_page,
+            ocr_fallback=page_range.ocr_enabled,
+            ocr_language=page_range.ocr_language
         )
         
         return TextExtractionResponse(

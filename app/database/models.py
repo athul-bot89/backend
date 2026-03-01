@@ -54,6 +54,10 @@ class Chapter(Base):
     summary = Column(Text)
     key_concepts = Column(Text)  # JSON string of key concepts
     
+    # Processing status fields
+    processing_status = Column(String(50), default="pending")  # pending, processing, pdf_ready, completed, failed
+    processing_error = Column(Text)  # Error message if processing failed
+    
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

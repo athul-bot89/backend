@@ -164,7 +164,9 @@ def update_textbook(
             toc_text = pdf_service.extract_text_from_pages(
                 textbook.file_path,
                 update_data.toc_start_page,
-                update_data.toc_end_page
+                update_data.toc_end_page,
+                ocr_fallback=True,
+                ocr_language="eng+hin+tam+tel+kan+mal+mar+guj+ben+pan+ori"
             )
             textbook.toc_text = toc_text
         except Exception as e:

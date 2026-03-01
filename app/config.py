@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     # Azure OpenAI settings
     azure_openai_api_key: str = os.getenv("AZURE_OPENAI_API_KEY", "")
     azure_openai_endpoint: str = os.getenv("AZURE_OPENAI_ENDPOINT", "")
-    azure_openai_deployment: str = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-5.2-chat")
+    azure_openai_deployment: str = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
     azure_openai_api_version: str = os.getenv("AZURE_OPENAI_API_VERSION", "2025-01-01-preview")
     
     # Legacy OpenAI settings (kept for backward compatibility)

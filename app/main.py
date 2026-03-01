@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 
 from app.config import settings
 from app.database.database import init_db
-from app.api import textbooks, chapters, extraction
+from app.api import textbooks, chapters, extraction, schedule
 
 # Lifespan context manager for startup/shutdown
 @asynccontextmanager
@@ -48,6 +48,7 @@ app.add_middleware(
 # Include API routers
 app.include_router(textbooks.router, prefix="/api/v1")
 app.include_router(chapters.router, prefix="/api/v1")
+app.include_router(schedule.router, prefix="/api/v1")
 app.include_router(extraction.router, prefix="/api/v1")
 
 # Root endpoint
