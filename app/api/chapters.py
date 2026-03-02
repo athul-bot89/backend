@@ -302,8 +302,8 @@ def process_chapter_async(
                 textbook_path,
                 start_page,
                 end_page,
-                ocr_fallback=False,  # Disable OCR in background to speed up
-                ocr_language="eng"
+                ocr_fallback=True,  # Enable OCR to ensure all text is extracted
+                ocr_language="eng+hin+tam+tel+kan+mal+mar+guj+ben+pan+ori"  # Support multiple languages
             )
             chapter.extracted_text = chapter_text
             chapter.processing_status = "completed"

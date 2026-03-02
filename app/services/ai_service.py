@@ -159,6 +159,8 @@ class AIService:
             3. Be written in clear, educational language
             4. Include the most important examples or applications mentioned
             5. MUST be written in the SAME LANGUAGE as the chapter text
+            6. CRITICAL: Use ONLY plain text - do NOT use any markdown formatting like **, ##, *, -, backticks, or other special characters for formatting
+            7. Write in simple paragraphs without any bold, italic, or heading markers
             
             Chapter text:
             {chapter_text[:4000]}  # Limit text to avoid token limits
@@ -167,7 +169,7 @@ class AIService:
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": "You are a multilingual educational content specialist creating summaries for teaching purposes. ALWAYS provide summaries in the SAME LANGUAGE as the input text."},
+                    {"role": "system", "content": "You are a multilingual educational content specialist creating summaries for teaching purposes. ALWAYS provide summaries in the SAME LANGUAGE as the input text. IMPORTANT: Generate ONLY plain text without any markdown formatting symbols."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.5,
@@ -200,6 +202,7 @@ class AIService:
             Example format: ["concept 1", "concept 2", "concept 3"]
             
             Note: Keep all concepts in the SAME LANGUAGE as the source text.
+            CRITICAL: Use plain text only - do NOT include any markdown formatting like **, ##, *, or special characters in the concepts.
             
             Chapter text:
             {chapter_text[:3000]}
@@ -208,7 +211,7 @@ class AIService:
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": "You are a multilingual educational expert identifying key learning concepts. ALWAYS extract concepts in the SAME LANGUAGE as the input text."},
+                    {"role": "system", "content": "You are a multilingual educational expert identifying key learning concepts. ALWAYS extract concepts in the SAME LANGUAGE as the input text. Return plain text concepts without any formatting symbols."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
@@ -247,6 +250,8 @@ class AIService:
             IMPORTANT: Detect the language of the chapter text and create ALL questions, options, and answers in the SAME LANGUAGE.
             
             Create a worksheet with {num_questions} questions based on the chapter titled "{chapter_title}".
+            
+            CRITICAL FORMATTING RULE: Use ONLY plain text in all questions, options, and answers. Do NOT use any markdown formatting like **, ##, *, -, backticks, or other special characters for emphasis or formatting.
             
             Generate a mix of question types:
             - Multiple choice questions (4 options each)
@@ -293,6 +298,7 @@ class AIService:
             4. For multiple choice, make all options plausible
             5. Base all questions on the actual content provided
             6. CRITICAL: ALL questions, options, and answers MUST be in the SAME LANGUAGE as the chapter text
+            7. IMPORTANT: Use only plain text - absolutely NO markdown formatting symbols (no **, ##, *, -, or backticks)
             
             Chapter text:
             {chapter_text[:4000]}
@@ -301,7 +307,7 @@ class AIService:
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": "You are a multilingual educational assessment expert creating comprehensive worksheets for students. ALWAYS create questions and answers in the SAME LANGUAGE as the input text."},
+                    {"role": "system", "content": "You are a multilingual educational assessment expert creating comprehensive worksheets for students. ALWAYS create questions and answers in the SAME LANGUAGE as the input text. IMPORTANT: Generate plain text only - do NOT use any markdown formatting symbols in your output."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.6,  # Slightly higher for variety in questions
@@ -371,7 +377,8 @@ class AIService:
                 Answer questions based on the chapter content provided. Be helpful, accurate, and educational.
                 If the question is not clearly answered in the chapter, acknowledge this and provide the best possible guidance.
                 Keep answers concise but comprehensive.
-                CRITICAL: ALWAYS detect the language of the student's question and provide your ENTIRE response in the SAME LANGUAGE."""}
+                CRITICAL: ALWAYS detect the language of the student's question and provide your ENTIRE response in the SAME LANGUAGE.
+                IMPORTANT: Use ONLY plain text in your responses. Do NOT use any markdown formatting like **, ##, *, -, backticks, or other special characters for emphasis or formatting."""}
             ]
             
             # Add conversation history if provided
@@ -400,6 +407,7 @@ class AIService:
             2. Any relevant examples from the chapter if applicable
             3. Related concepts that might help understanding
             4. Your ENTIRE response MUST be in the SAME LANGUAGE as the question
+            5. CRITICAL: Use ONLY plain text - do NOT use markdown formatting (no **, ##, *, -, backticks, etc.)
             """
             
             messages.append({"role": "user", "content": prompt})
@@ -447,6 +455,7 @@ class AIService:
             Return ONLY a JSON array of strings.
             
             Note: Keep all concepts in the SAME LANGUAGE as the question.
+            CRITICAL: Use plain text only - do NOT include any markdown formatting symbols in the concepts.
             
             Chapter excerpt:
             {chapter_text[:2000]}
@@ -455,7 +464,7 @@ class AIService:
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": "You are a multilingual expert at identifying related educational concepts. ALWAYS provide concepts in the SAME LANGUAGE as the input question."},
+                    {"role": "system", "content": "You are a multilingual expert at identifying related educational concepts. ALWAYS provide concepts in the SAME LANGUAGE as the input question. Return plain text concepts without any formatting symbols."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,

@@ -6,7 +6,13 @@ Handles PDF text extraction, page splitting, and other PDF operations.
 import fitz  # PyMuPDF
 from typing import List, Tuple, Optional
 import os
+import re
+import logging
 from pathlib import Path
+
+# Set up logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 try:
     from pdf2image import convert_from_path
     import pytesseract
@@ -41,44 +47,100 @@ class PDFService:
             raise Exception(f"Error reading PDF: {str(e)}")
     
     @staticmethod
-    def needs_ocr(pdf_path: str, sample_page: int = 1) -> bool:
+    def needs_ocr(pdf_path: str, sample_pages: List[int] = None) -> bool:
         """
-        Check if a PDF needs OCR by testing text extraction on a sample page.
+        Check if a PDF needs OCR by testing text extraction on multiple sample pages.
+        Uses a conservative approach - returns True if ANY page needs OCR.
         
         Args:
             pdf_path: Path to the PDF file
-            sample_page: Page number to test (1-based, default: 1)
+            sample_pages: List of page numbers to test (1-based). If None, samples first, middle, and last third
             
         Returns:
             True if OCR is needed, False otherwise
         """
+        import re
+        
         try:
             with fitz.open(pdf_path) as pdf_doc:
-                if sample_page > len(pdf_doc):
-                    sample_page = 1
+                total_pages = len(pdf_doc)
                 
-                page = pdf_doc[sample_page - 1]
-                text = page.get_text()
+                # Determine which pages to sample
+                if sample_pages is None:
+                    # Sample from different parts of the document
+                    sample_pages = []
+                    if total_pages > 0:
+                        sample_pages.append(1)  # First page
+                    if total_pages > 3:
+                        sample_pages.append(total_pages // 3)  # First third
+                    if total_pages > 6:
+                        sample_pages.append(2 * total_pages // 3)  # Second third
+                    if total_pages > 1:
+                        sample_pages.append(total_pages)  # Last page
+                    
+                    # Remove duplicates and ensure valid range
+                    sample_pages = list(set(sample_pages))
                 
-                # Check if text is empty or garbled
-                if not text or not text.strip():
-                    return True
+                # Check each sample page
+                for page_num in sample_pages:
+                    if page_num < 1 or page_num > total_pages:
+                        continue
+                    
+                    page = pdf_doc[page_num - 1]
+                    text = page.get_text()
+                    
+                    # Count images on the page
+                    image_count = len(page.get_images())
+                    has_significant_images = image_count > 0
+                    
+                    # Check if text is empty or too short
+                    if not text or len(text.strip()) < 50:
+                        # If page has images and no/little text, definitely needs OCR
+                        if has_significant_images:
+                            return True
+                        # Even without images, very little text is suspicious
+                        if len(text.strip()) < 20:
+                            return True
+                    
+                    # Check if text looks like just page numbers or headers
+                    # Common patterns: "Page 1", "1", "Chapter", dates, etc.
+                    header_pattern = r'^\s*(Page\s*\d+|\d+|Chapter|CHAPTER|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|[IVXivx]+)\s*$'
+                    lines = text.strip().split('\n')
+                    non_header_lines = [line for line in lines if line.strip() and not re.match(header_pattern, line.strip())]
+                    
+                    # If most content looks like headers/page numbers, needs OCR
+                    if len(non_header_lines) < 3 and has_significant_images:
+                        return True
+                    
+                    # Check for CID encoding (both upper and lowercase)
+                    if '(cid:' in text.lower() or 'CID:' in text or '(CID' in text:
+                        return True
+                    
+                    # Enhanced garbled character detection
+                    garbled_chars = ['Ú', 'Ë', '˙', 'ﬁ', '˜', 'Æ', '∆', '®', '¥', '∫', '√', '∂', '∑', 
+                                   'Ω', '≈', '∞', '≤', '≥', '±', '≠', '×', '÷', '◊', 'Ø']
+                    if any(char in text for char in garbled_chars):
+                        # Count how many garbled characters
+                        garbled_count = sum(1 for char in text if char in garbled_chars)
+                        if garbled_count > len(text) * 0.05:  # More than 5% garbled
+                            return True
+                    
+                    # Check for too many non-ASCII characters in non-Unicode range
+                    non_ascii = len([c for c in text if ord(c) < 32 or (ord(c) > 126 and ord(c) < 256)])
+                    if non_ascii > len(text) * 0.3:
+                        return True
+                    
+                    # Check if extracted text is too short relative to page size
+                    # A typical page should have at least 100-200 characters
+                    if len(text.strip()) < 100 and has_significant_images:
+                        return True
                 
-                # Check for CID encoding
-                if '(cid:' in text.lower():
-                    return True
-                
-                # Check for garbled characters
-                if any(char in text for char in ['Ú', 'Ë', '˙', 'ﬁ', '˜', 'Æ', '∆', '®', '¥', '∫', '√', '∂', '∑']):
-                    return True
-                
-                # Check for too many non-ASCII characters in non-Unicode range
-                non_ascii = len([c for c in text if ord(c) < 32 or (ord(c) > 126 and ord(c) < 256)])
-                if non_ascii > len(text) * 0.3:
-                    return True
-                
+                # If all sample pages passed, OCR not needed
                 return False
-        except:
+                
+        except Exception as e:
+            # If we can't determine, err on the side of caution and use OCR
+            print(f"Error checking OCR need: {e}")
             return True
     
     @staticmethod
@@ -116,6 +178,20 @@ class PDFService:
         # Check if file exists
         if not os.path.isfile(pdf_path):
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
+                # Pre-check if PDF needs OCR (optional optimization)
+        # This helps us log upfront whether OCR will likely be needed
+        if ocr_fallback and OCR_AVAILABLE:
+            # Sample a few pages from the range to check
+            sample_pages = []
+            if end_page - start_page + 1 <= 3:
+                # For small ranges, check all pages
+                sample_pages = list(range(start_page, end_page + 1))
+            else:
+                # For larger ranges, sample first, middle, and last
+                sample_pages = [start_page, (start_page + end_page) // 2, end_page]
+            
+            if PDFService.needs_ocr(pdf_path, sample_pages):
+                logger.info(f"PDF likely needs OCR based on sample pages {sample_pages}. OCR will be attempted where needed.")
         
         try:
             with fitz.open(pdf_path) as pdf_doc:
@@ -151,6 +227,7 @@ class PDFService:
                                     extraction_method = "pdfplumber"
                         except Exception as e:
                             # pdfplumber failed, continue to other methods
+                            logger.debug(f"pdfplumber extraction failed for page {page_label}: {e}")
                             pass
                     
                     # Try PyMuPDF if pdfplumber didn't work
@@ -177,15 +254,55 @@ class PDFService:
                     
                     if is_garbled:
                         # Text appears to be garbled or CID-encoded, force OCR
+                        logger.info(f"Page {page_label}: Detected garbled/CID-encoded text, will attempt OCR")
                         text = ""
                         extraction_method = ""
                     
-                    # Check if text extraction was successful
+                    # Enhanced check if text extraction was truly successful
+                    # Don't just check if text exists, check if it's meaningful
+                    text_is_meaningful = False
                     if text.strip():
-                        # Text extraction worked
+                        import re
+                        # Check if text is more than just page numbers or minimal headers
+                        # Common patterns that shouldn't count as successful extraction
+                        minimal_patterns = [
+                            r'^\s*\d+\s*$',  # Just a number (likely page number)
+                            r'^\s*Page\s*\d+\s*$',  # "Page X" format
+                            r'^\s*\d+\s*/\s*\d+\s*$',  # "X/Y" page format
+                            r'^\s*[IVXivx]+\s*$',  # Roman numerals only
+                        ]
+                        
+                        # Strip and check if it's just minimal text
+                        stripped_text = text.strip()
+                        is_minimal = any(re.match(pattern, stripped_text) for pattern in minimal_patterns)
+                        
+                        # Also check if text is suspiciously short (less than 50 chars is likely just headers)
+                        # But allow short text if there are no images on the page
+                        page = pdf_doc[page_num]
+                        has_images = len(page.get_images()) > 0
+                        
+                        # Text is meaningful if:
+                        # 1. It's not matching minimal patterns AND
+                        # 2. Either it's reasonably long OR there are no images (might be a genuine short page)
+                        text_is_meaningful = (
+                            not is_minimal and 
+                            (len(stripped_text) > 50 or not has_images)
+                        )
+                        
+                        # If text exists but seems insufficient and page has images, try OCR anyway
+                        if not text_is_meaningful and has_images and ocr_fallback and OCR_AVAILABLE:
+                            # Mark that we should try OCR
+                            logger.info(f"Page {page_label}: Extracted text seems minimal ({len(stripped_text)} chars) with images present, will attempt OCR")
+                            text = ""
+                            extraction_method = ""
+                    
+                    # Check if text extraction was truly successful
+                    if text.strip() and text_is_meaningful:
+                        # Text extraction worked and is meaningful
                         extracted_text.append(f"--- Page {page_label} ({extraction_method}) ---\n{text}")
                     elif ocr_fallback and OCR_AVAILABLE:
                         # Try OCR fallback for image-based pages
+                        logger.info(f"Page {page_label}: No meaningful text extracted, attempting OCR...")
                         try:
                             # Convert only the specific page to image
                             images = convert_from_path(
@@ -206,15 +323,18 @@ class PDFService:
                                 )
                                 
                                 if ocr_text.strip():
+                                    logger.info(f"Page {page_label}: OCR successful, extracted {len(ocr_text)} characters")
                                     extracted_text.append(f"--- Page {page_label} (OCR) ---\n{ocr_text}")
                                 else:
                                     # OCR didn't find any text
+                                    logger.warning(f"Page {page_label}: OCR completed but no text found")
                                     extracted_text.append(f"--- Page {page_label} (OCR - no text found) ---\n")
                             else:
                                 extracted_text.append(f"--- Page {page_label} (OCR - conversion failed) ---\n")
                         
                         except Exception as ocr_error:
                             # OCR failed, add error note
+                            logger.error(f"Page {page_label}: OCR failed - {str(ocr_error)}")
                             extracted_text.append(
                                 f"--- Page {page_label} (OCR failed: {str(ocr_error)}) ---\n"
                             )
