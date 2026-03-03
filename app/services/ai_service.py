@@ -46,6 +46,10 @@ class AIService:
             # Create a prompt for chapter detection
             prompt = """
             IMPORTANT: Detect the language of the input text and respond with chapter titles in the SAME language.
+            CRITICAL SPELLING ACCURACY: Ensure all chapter titles have CORRECT SPELLING in the detected language. 
+            - For non-English languages, pay special attention to diacritical marks, accents, and special characters
+            - Preserve exact spelling from the source text, including language-specific characters
+            - Do NOT translate or anglicize any terms
             
             Analyze the following table of contents text and extract all chapter titles.
             Return ONLY a JSON object with the following EXACT structure:
@@ -68,7 +72,8 @@ class AIService:
             5. Estimate end_page as the page before the next chapter starts (or use 0 if unknown)
             6. Use 0 for start_page and end_page if page numbers cannot be determined
             7. The response MUST be a JSON object with a "chapters" array, not just an array
-            8. CRITICAL: Keep chapter titles in the SAME LANGUAGE as the source text
+            8. CRITICAL: Keep chapter titles in the SAME LANGUAGE as the source text with PERFECT SPELLING
+            9. IMPORTANT: Maintain all language-specific characters, accents, and diacritical marks exactly as they appear
             
             Table of Contents Text:
             """
@@ -76,7 +81,7 @@ class AIService:
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": "You are a helpful assistant that extracts structured information from text. Always return valid JSON in the exact format requested. IMPORTANT: Always respond in the SAME LANGUAGE as the input text."},
+                    {"role": "system", "content": "You are a helpful assistant that extracts structured information from text. Always return valid JSON in the exact format requested. IMPORTANT: Always respond in the SAME LANGUAGE as the input text with CORRECT SPELLING, including all diacritical marks, accents, and special characters."},
                     {"role": "user", "content": prompt + toc_text}
                 ],
                 temperature=0.3,  # Lower temperature for more consistent output
@@ -150,6 +155,10 @@ class AIService:
         try:
             prompt = f"""
             IMPORTANT: Detect the language of the chapter text and provide your summary in the SAME LANGUAGE.
+            CRITICAL SPELLING: Ensure PERFECT SPELLING in the detected language, including:
+            - All diacritical marks, accents, and special characters
+            - Language-specific letter combinations and spelling rules
+            - Proper capitalization according to the language's conventions
             
             Create a comprehensive summary of the following chapter titled "{chapter_title}".
             
@@ -158,7 +167,7 @@ class AIService:
             2. Capture the main concepts and key points
             3. Be written in clear, educational language
             4. Include the most important examples or applications mentioned
-            5. MUST be written in the SAME LANGUAGE as the chapter text
+            5. MUST be written in the SAME LANGUAGE as the chapter text with CORRECT SPELLING
             6. CRITICAL: Use ONLY plain text - do NOT use any markdown formatting like **, ##, *, -, backticks, or other special characters for formatting
             7. Write in simple paragraphs without any bold, italic, or heading markers
             
@@ -169,7 +178,7 @@ class AIService:
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": "You are a multilingual educational content specialist creating summaries for teaching purposes. ALWAYS provide summaries in the SAME LANGUAGE as the input text. IMPORTANT: Generate ONLY plain text without any markdown formatting symbols."},
+                    {"role": "system", "content": "You are a multilingual educational content specialist creating summaries for teaching purposes. ALWAYS provide summaries in the SAME LANGUAGE as the input text with PERFECT SPELLING, including all diacritical marks and special characters. IMPORTANT: Generate ONLY plain text without any markdown formatting symbols."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.5,
@@ -195,13 +204,17 @@ class AIService:
         try:
             prompt = f"""
             IMPORTANT: Detect the language of the chapter text and provide concepts in the SAME LANGUAGE.
+            CRITICAL SPELLING: Ensure all concepts have CORRECT SPELLING in the detected language:
+            - Preserve all diacritical marks, accents, and special characters
+            - Use proper spelling according to the language's rules
+            - Do NOT anglicize or simplify terms
             
             Extract the 5-10 most important key concepts or terms from this chapter.
             Return ONLY a JSON array of strings, each being a key concept.
             
             Example format: ["concept 1", "concept 2", "concept 3"]
             
-            Note: Keep all concepts in the SAME LANGUAGE as the source text.
+            Note: Keep all concepts in the SAME LANGUAGE as the source text with PERFECT SPELLING.
             CRITICAL: Use plain text only - do NOT include any markdown formatting like **, ##, *, or special characters in the concepts.
             
             Chapter text:
@@ -211,7 +224,7 @@ class AIService:
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": "You are a multilingual educational expert identifying key learning concepts. ALWAYS extract concepts in the SAME LANGUAGE as the input text. Return plain text concepts without any formatting symbols."},
+                    {"role": "system", "content": "You are a multilingual educational expert identifying key learning concepts. ALWAYS extract concepts in the SAME LANGUAGE as the input text with CORRECT SPELLING, preserving all diacritical marks and special characters. Return plain text concepts without any formatting symbols."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
@@ -248,6 +261,11 @@ class AIService:
         try:
             prompt = f"""
             IMPORTANT: Detect the language of the chapter text and create ALL questions, options, and answers in the SAME LANGUAGE.
+            CRITICAL SPELLING ACCURACY: Ensure PERFECT SPELLING throughout:
+            - All questions, options, and answers must have correct spelling in the detected language
+            - Preserve all diacritical marks, accents, and language-specific characters
+            - Follow proper spelling and grammar rules of the detected language
+            - Do NOT translate or anglicize any terms
             
             Create a worksheet with {num_questions} questions based on the chapter titled "{chapter_title}".
             
@@ -297,8 +315,9 @@ class AIService:
             3. Make questions clear and unambiguous
             4. For multiple choice, make all options plausible
             5. Base all questions on the actual content provided
-            6. CRITICAL: ALL questions, options, and answers MUST be in the SAME LANGUAGE as the chapter text
+            6. CRITICAL: ALL questions, options, and answers MUST be in the SAME LANGUAGE as the chapter text with PERFECT SPELLING
             7. IMPORTANT: Use only plain text - absolutely NO markdown formatting symbols (no **, ##, *, -, or backticks)
+            8. ESSENTIAL: Maintain correct spelling with all language-specific characters and diacritical marks
             
             Chapter text:
             {chapter_text[:4000]}
@@ -307,7 +326,7 @@ class AIService:
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": "You are a multilingual educational assessment expert creating comprehensive worksheets for students. ALWAYS create questions and answers in the SAME LANGUAGE as the input text. IMPORTANT: Generate plain text only - do NOT use any markdown formatting symbols in your output."},
+                    {"role": "system", "content": "You are a multilingual educational assessment expert creating comprehensive worksheets for students. ALWAYS create questions and answers in the SAME LANGUAGE as the input text with PERFECT SPELLING, including all diacritical marks and special characters. IMPORTANT: Generate plain text only - do NOT use any markdown formatting symbols in your output."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.6,  # Slightly higher for variety in questions
@@ -377,7 +396,8 @@ class AIService:
                 Answer questions based on the chapter content provided. Be helpful, accurate, and educational.
                 If the question is not clearly answered in the chapter, acknowledge this and provide the best possible guidance.
                 Keep answers concise but comprehensive.
-                CRITICAL: ALWAYS detect the language of the student's question and provide your ENTIRE response in the SAME LANGUAGE.
+                CRITICAL: ALWAYS detect the language of the student's question and provide your ENTIRE response in the SAME LANGUAGE with PERFECT SPELLING.
+                SPELLING ACCURACY: Ensure correct spelling including all diacritical marks, accents, and language-specific characters.
                 IMPORTANT: Use ONLY plain text in your responses. Do NOT use any markdown formatting like **, ##, *, -, backticks, or other special characters for emphasis or formatting."""}
             ]
             
@@ -392,6 +412,10 @@ class AIService:
             # Add current context and question
             prompt = f"""
             IMPORTANT: Respond in the SAME LANGUAGE as the student's question.
+            CRITICAL SPELLING: Ensure PERFECT SPELLING in your response:
+            - Use correct spelling with all diacritical marks and accents
+            - Follow the spelling conventions of the detected language
+            - Preserve language-specific characters exactly
             
             Based on the following chapter content, please answer the student's question.
             
@@ -406,7 +430,7 @@ class AIService:
             1. A clear and helpful answer to the question
             2. Any relevant examples from the chapter if applicable
             3. Related concepts that might help understanding
-            4. Your ENTIRE response MUST be in the SAME LANGUAGE as the question
+            4. Your ENTIRE response MUST be in the SAME LANGUAGE as the question with CORRECT SPELLING
             5. CRITICAL: Use ONLY plain text - do NOT use markdown formatting (no **, ##, *, -, backticks, etc.)
             """
             
@@ -448,13 +472,17 @@ class AIService:
         try:
             prompt = f"""
             IMPORTANT: Detect the language of the question and provide concepts in the SAME LANGUAGE.
+            CRITICAL SPELLING: Ensure all concepts have CORRECT SPELLING:
+            - Preserve all diacritical marks, accents, and special characters
+            - Use proper spelling according to the language's conventions
+            - Do NOT anglicize or simplify terms
             
             Based on this question: "{question}"
             
             Extract 3-5 related key concepts or terms from the chapter that are relevant to understanding the answer.
             Return ONLY a JSON array of strings.
             
-            Note: Keep all concepts in the SAME LANGUAGE as the question.
+            Note: Keep all concepts in the SAME LANGUAGE as the question with PERFECT SPELLING.
             CRITICAL: Use plain text only - do NOT include any markdown formatting symbols in the concepts.
             
             Chapter excerpt:
@@ -464,7 +492,7 @@ class AIService:
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": "You are a multilingual expert at identifying related educational concepts. ALWAYS provide concepts in the SAME LANGUAGE as the input question. Return plain text concepts without any formatting symbols."},
+                    {"role": "system", "content": "You are a multilingual expert at identifying related educational concepts. ALWAYS provide concepts in the SAME LANGUAGE as the input question with CORRECT SPELLING, preserving all diacritical marks and special characters. Return plain text concepts without any formatting symbols."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
