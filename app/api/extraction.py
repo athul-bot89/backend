@@ -5,17 +5,18 @@ Handles extracting text from specific page ranges.
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+import asyncio
 
 from app.database.database import get_db
 from app.database.models import Textbook
-from app.models.schemas import TextExtractionResponse, PageRangeRequest
+from app.models.schemas import TextExtractionResponse, PageRangeRequest, VisionProcessingStatus
 from app.services.pdf_service import PDFService
 
 # Create router for extraction endpoints
 router = APIRouter(prefix="/extract", tags=["extraction"])
 
 @router.post("/textbook/{textbook_id}/pages", response_model=TextExtractionResponse)
-def extract_text_from_pages(
+async def extract_text_from_pages(
     textbook_id: int,
     page_range: PageRangeRequest,
     db: Session = Depends(get_db)
@@ -31,6 +32,7 @@ def extract_text_from_pages(
     - **textbook_id**: ID of the textbook
     - **start_page**: Starting page number (1-based)
     - **end_page**: Ending page number (inclusive)
+    - **use_batch_vision**: Enable batch Vision API processing for faster OCR (default: true)
     """
     
     # Get the textbook
@@ -52,15 +54,25 @@ def extract_text_from_pages(
         raise HTTPException(status_code=400, detail="Start page must be less than or equal to end page")
     
     try:
-        # Extract text using PDF service with OCR language support
-        pdf_service = PDFService()
-        extracted_text = pdf_service.extract_text_from_pages(
-            textbook.file_path,
-            page_range.start_page,
-            page_range.end_page,
-            ocr_fallback=page_range.ocr_enabled,
-            ocr_language=page_range.ocr_language
-        )
+        # Use async extraction with batch Vision processing if enabled
+        if page_range.use_batch_vision and page_range.ocr_enabled:
+            extracted_text = await PDFService.extract_text_from_pages_async(
+                textbook.file_path,
+                page_range.start_page,
+                page_range.end_page,
+                use_batch_vision=True,
+                ocr_fallback=page_range.ocr_enabled
+            )
+        else:
+            # Use traditional synchronous extraction
+            pdf_service = PDFService()
+            extracted_text = pdf_service.extract_text_from_pages(
+                textbook.file_path,
+                page_range.start_page,
+                page_range.end_page,
+                ocr_fallback=page_range.ocr_enabled,
+                ocr_language=page_range.ocr_language
+            )
         
         return TextExtractionResponse(
             extracted_text=extracted_text,

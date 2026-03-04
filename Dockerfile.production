@@ -1,0 +1,35 @@
+# Production-optimized Dockerfile without --reload flag
+# Use this for production deployments for better performance
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy and install requirements
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application with all files including .env
+COPY . .
+
+# Set Python optimization flags for production
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONOPTIMIZE=2
+
+# Create necessary directories
+RUN mkdir -p uploads chapters
+
+# Set permissions
+RUN if [ -f teaching_assistant.db ]; then chmod 644 teaching_assistant.db; fi
+
+EXPOSE 8000
+
+# Production command without --reload for better performance
+# Using 4 workers for better concurrency
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]

@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     app_title: str = "AI Teaching Assistant API"
     app_version: str = "1.0.0"
     
+    # Vision batch processing settings
+    vision_batch_size: int = int(os.getenv("VISION_BATCH_SIZE", "20"))
+    vision_max_concurrent: int = int(os.getenv("VISION_MAX_CONCURRENT", "20"))
+    vision_retry_max_attempts: int = int(os.getenv("VISION_RETRY_MAX_ATTEMPTS", "3"))
+    vision_retry_backoff_factor: float = float(os.getenv("VISION_RETRY_BACKOFF_FACTOR", "2.0"))
+    vision_timeout_seconds: int = int(os.getenv("VISION_TIMEOUT_SECONDS", "300"))
+    
     class Config:
         env_file = ".env"
 

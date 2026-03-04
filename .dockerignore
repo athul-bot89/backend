@@ -1,0 +1,38 @@
+# Python virtual environment
+venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Note: .env file is NOT in dockerignore - we want it included in the image
+# Note: teaching_assistant.db is NOT ignored - we want the database in the image
+# Note: uploads/ and chapters/ are NOT ignored - we want existing files included

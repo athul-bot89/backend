@@ -4,12 +4,18 @@ Handles chapter detection and content generation.
 """
 
 from openai import OpenAI, AzureOpenAI
-from typing import List, Dict, Optional, Union
+from typing import List, Dict, Optional, Union, Tuple
 import json
 import base64
 from io import BytesIO
 from PIL import Image
 from app.config import settings
+import asyncio
+import aiohttp
+from tenacity import retry, stop_after_attempt, wait_exponential
+import logging
+
+logger = logging.getLogger(__name__)
 
 class AIService:
     """Service for AI-powered operations using OpenAI API."""
@@ -599,3 +605,194 @@ class AIService:
         except Exception as e:
             print(f"Error extracting related concepts: {e}")
             return []  # Return empty list if extraction fails
+
+
+class AsyncVisionBatchProcessor:
+    """Async batch processor for Vision API with parallel processing capabilities."""
+    
+    def __init__(self):
+        """Initialize the async Vision batch processor."""
+        self.semaphore = asyncio.Semaphore(settings.vision_max_concurrent)
+        self.session = None
+        
+        # Set up API configuration
+        if settings.use_azure_openai:
+            if not settings.azure_openai_api_key or not settings.azure_openai_endpoint:
+                raise ValueError("Azure OpenAI credentials not found")
+            
+            self.api_key = settings.azure_openai_api_key
+            self.endpoint = settings.azure_openai_endpoint
+            self.model_name = settings.azure_openai_deployment
+            self.api_version = settings.azure_openai_api_version
+            self.is_azure = True
+        else:
+            if not settings.openai_api_key:
+                raise ValueError("OpenAI API key not found")
+            
+            self.api_key = settings.openai_api_key
+            self.endpoint = "https://api.openai.com/v1/chat/completions"
+            self.model_name = "gpt-4o"
+            self.is_azure = False
+    
+    async def __aenter__(self):
+        """Create aiohttp session on context enter."""
+        timeout = aiohttp.ClientTimeout(total=settings.vision_timeout_seconds)
+        self.session = aiohttp.ClientSession(timeout=timeout)
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Close aiohttp session on context exit."""
+        if self.session:
+            await self.session.close()
+    
+    @retry(
+        stop=stop_after_attempt(settings.vision_retry_max_attempts),
+        wait=wait_exponential(
+            multiplier=settings.vision_retry_backoff_factor,
+            min=2,
+            max=60
+        )
+    )
+    async def _process_single_image(
+        self, 
+        image: Union[Image.Image, bytes],
+        page_num: int,
+        prompt: str = None
+    ) -> Tuple[int, str]:
+        """
+        Process a single image with retry logic.
+        
+        Args:
+            image: PIL Image or bytes
+            page_num: Page number for tracking
+            prompt: Optional custom prompt
+            
+        Returns:
+            Tuple of (page_number, extracted_text)
+        """
+        async with self.semaphore:  # Limit concurrent requests
+            try:
+                # Convert image to base64
+                if isinstance(image, Image.Image):
+                    buffered = BytesIO()
+                    image.save(buffered, format="PNG")
+                    image_bytes = buffered.getvalue()
+                else:
+                    image_bytes = image
+                
+                base64_image = base64.b64encode(image_bytes).decode('utf-8')
+                
+                # Default OCR prompt
+                if prompt is None:
+                    prompt = (
+                        "Please extract ALL text from this image with high accuracy. "
+                        "This may include text in multiple languages including English, Hindi, Tamil, Telugu, "
+                        "Kannada, Malayalam, Marathi, Gujarati, Bengali, Punjabi, and Oriya. "
+                        "Preserve the original formatting, line breaks, and structure as much as possible. "
+                        "If there are tables, maintain their structure. "
+                        "If there are mathematical equations or formulas, transcribe them accurately. "
+                        "Return ONLY the extracted text without any additional commentary."
+                    )
+                
+                # Prepare the request payload
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{base64_image}",
+                                    "detail": "high"
+                                }
+                            }
+                        ]
+                    }
+                ]
+                
+                # Build request based on Azure or OpenAI
+                if self.is_azure:
+                    url = f"{self.endpoint}/openai/deployments/{self.model_name}/chat/completions?api-version={self.api_version}"
+                    headers = {
+                        "api-key": self.api_key,
+                        "Content-Type": "application/json"
+                    }
+                else:
+                    url = self.endpoint
+                    headers = {
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json"
+                    }
+                
+                payload = {
+                    "model": self.model_name,
+                    "messages": messages,
+                    "max_tokens": 4000,
+                    "temperature": 0
+                }
+                
+                # Make async request
+                async with self.session.post(url, json=payload, headers=headers) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        text = result['choices'][0]['message']['content']
+                        logger.info(f"Successfully processed page {page_num}")
+                        return (page_num, text)
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"API error for page {page_num}: {response.status} - {error_text}")
+                        raise Exception(f"API request failed: {response.status}")
+                        
+            except Exception as e:
+                logger.error(f"Error processing page {page_num}: {str(e)}")
+                raise
+    
+    async def process_image_batch(
+        self,
+        images: List[Tuple[int, Union[Image.Image, bytes]]],
+        prompt: str = None,
+        progress_callback = None
+    ) -> Dict[int, str]:
+        """
+        Process multiple images in parallel.
+        
+        Args:
+            images: List of tuples (page_num, image)
+            prompt: Optional custom prompt for all images
+            progress_callback: Optional callback for progress updates
+            
+        Returns:
+            Dictionary mapping page numbers to extracted text
+        """
+        if not self.session:
+            raise RuntimeError("Session not initialized. Use 'async with' context manager.")
+        
+        # Create tasks for parallel processing
+        tasks = [
+            self._process_single_image(image, page_num, prompt)
+            for page_num, image in images
+        ]
+        
+        # Process all images concurrently
+        results = {}
+        completed = 0
+        
+        for task in asyncio.as_completed(tasks):
+            try:
+                page_num, text = await task
+                results[page_num] = text
+                completed += 1
+                
+                # Update progress if callback provided
+                if progress_callback:
+                    await progress_callback(completed, len(images), page_num)
+                    
+            except Exception as e:
+                # Log error but continue with other pages
+                logger.error(f"Failed to process a page: {str(e)}")
+                # Store empty string for failed pages
+                # We'll get page_num from the error context if possible
+                continue
+        
+        return results

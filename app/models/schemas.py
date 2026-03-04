@@ -106,6 +106,10 @@ class PageRangeRequest(BaseModel):
         default=True,
         description="Enable OCR for image-based PDFs"
     )
+    use_batch_vision: Optional[bool] = Field(
+        default=True,
+        description="Use batch Vision API processing for faster OCR (processes up to 20 pages in parallel)"
+    )
 
 class TextExtractionResponse(BaseModel):
     """Schema for text extraction response."""
@@ -251,6 +255,23 @@ class StudyScheduleResponse(BaseModel):
     end_date: datetime
     total_study_days: int
     schedule: List[ScheduledChapter]
+
+class VisionProcessingStatus(BaseModel):
+    """Schema for Vision API batch processing progress."""
+    total_pages: int = Field(..., description="Total number of pages to process")
+    processed_pages: int = Field(..., description="Number of pages already processed")
+    current_batch: Optional[int] = Field(None, description="Current batch being processed")
+    total_batches: Optional[int] = Field(None, description="Total number of batches")
+    status: str = Field(..., description="Processing status: 'processing', 'completed', 'failed'")
+    message: Optional[str] = Field(None, description="Status message or error details")
+    
+    @computed_field
+    @property
+    def progress_percentage(self) -> float:
+        """Calculate progress percentage."""
+        if self.total_pages == 0:
+            return 0.0
+        return round((self.processed_pages / self.total_pages) * 100, 2)
     weekly_breakdown: Optional[Dict[str, List[str]]] = Field(None, description="Weekly breakdown of chapters")
     conflicts: Optional[List[str]] = Field(None, description="Any scheduling conflicts or warnings")
     recommendations: Optional[List[str]] = Field(None, description="AI-generated study recommendations")

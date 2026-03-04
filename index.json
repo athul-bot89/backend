@@ -1,0 +1,1 @@
+{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"sha256:1792ab7a1b2c0e3b8b8fa50b52631d7d895432f365f6d0c8558d7853df68bea8","size":1928,"annotations":{"io.containerd.image.name":"docker.io/library/teaching-assistant-api:latest","org.opencontainers.image.ref.name":"latest"}}]}

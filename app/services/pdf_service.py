@@ -4,13 +4,16 @@ Handles PDF text extraction, page splitting, and other PDF operations.
 """
 
 import fitz  # PyMuPDF
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 import os
 import re
 import logging
 from pathlib import Path
 from PIL import Image
 from io import BytesIO
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from app.config import settings
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -304,7 +307,7 @@ class PDFService:
                     elif ocr_fallback:
                         # Try OpenAI Vision API for OCR
                         logger.info(f"Page {page_label}: No meaningful text extracted, attempting OCR with OpenAI Vision...")
-                        ocr_text = self.extract_text_with_vision(
+                        ocr_text = PDFService.extract_text_with_vision(
                             pdf_path=pdf_path,
                             page_number=page_label,
                             dpi=ocr_dpi
@@ -480,7 +483,8 @@ class PDFService:
         except Exception as e:
             raise Exception(f"Error getting page info: {str(e)}")
     
-    def extract_text_with_vision(self, pdf_path: str, page_number: int, dpi: int = 300) -> str:
+    @staticmethod
+    def extract_text_with_vision(pdf_path: str, page_number: int, dpi: int = 300) -> str:
         """
         Extract text from a PDF page using OpenAI Vision API.
         
@@ -530,6 +534,251 @@ class PDFService:
         except Exception as e:
             logger.error(f"Vision API OCR failed for page {page_number}: {str(e)}")
             return ""
+    
+    @staticmethod
+    def convert_pdf_pages_batch(
+        pdf_path: str, 
+        page_numbers: List[int], 
+        dpi: int = 300
+    ) -> List[Tuple[int, Image.Image]]:
+        """
+        Convert multiple PDF pages to images in batch.
+        
+        Args:
+            pdf_path: Path to the PDF file
+            page_numbers: List of page numbers to convert (1-indexed)
+            dpi: DPI for image conversion
+            
+        Returns:
+            List of tuples (page_number, PIL Image)
+        """
+        if not PDF2IMAGE_AVAILABLE:
+            logger.error("pdf2image library not available for batch conversion")
+            return []
+        
+        try:
+            # Sort page numbers to optimize conversion
+            page_numbers_sorted = sorted(page_numbers)
+            
+            # Convert pages in chunks to manage memory
+            result_images = []
+            
+            for page_num in page_numbers_sorted:
+                try:
+                    # Convert single page to avoid memory issues with large batches
+                    images = convert_from_path(
+                        pdf_path,
+                        first_page=page_num,
+                        last_page=page_num,
+                        dpi=dpi,
+                        thread_count=4  # Use multiple threads for faster conversion
+                    )
+                    
+                    if images:
+                        result_images.append((page_num, images[0]))
+                        logger.debug(f"Converted page {page_num} to image")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to convert page {page_num}: {str(e)}")
+                    # Continue with other pages even if one fails
+            
+            return result_images
+            
+        except Exception as e:
+            logger.error(f"Batch conversion failed: {str(e)}")
+            return []
+    
+    @staticmethod
+    async def extract_text_with_vision_batch(
+        pdf_path: str,
+        page_numbers: List[int],
+        dpi: int = 300,
+        progress_callback = None
+    ) -> Dict[int, str]:
+        """
+        Extract text from multiple PDF pages using Vision API with batch processing.
+        
+        Args:
+            pdf_path: Path to the PDF file
+            page_numbers: List of page numbers to process (1-indexed)
+            dpi: DPI for image conversion
+            progress_callback: Optional async callback for progress updates
+            
+        Returns:
+            Dictionary mapping page numbers to extracted text
+        """
+        # Import here to avoid circular dependencies
+        from app.services.ai_service import AsyncVisionBatchProcessor
+        
+        results = {}
+        
+        try:
+            # Process pages in chunks to manage memory
+            chunk_size = settings.vision_batch_size
+            page_chunks = [
+                page_numbers[i:i + chunk_size] 
+                for i in range(0, len(page_numbers), chunk_size)
+            ]
+            
+            async with AsyncVisionBatchProcessor() as processor:
+                for chunk_idx, chunk_pages in enumerate(page_chunks):
+                    logger.info(f"Processing chunk {chunk_idx + 1}/{len(page_chunks)} with {len(chunk_pages)} pages")
+                    
+                    # Convert pages to images using ThreadPoolExecutor for CPU-bound task
+                    with ThreadPoolExecutor(max_workers=4) as executor:
+                        loop = asyncio.get_event_loop()
+                        images = await loop.run_in_executor(
+                            executor,
+                            PDFService.convert_pdf_pages_batch,
+                            pdf_path,
+                            chunk_pages,
+                            dpi
+                        )
+                    
+                    if not images:
+                        logger.warning(f"No images converted for chunk {chunk_idx + 1}")
+                        continue
+                    
+                    # Process images with Vision API in parallel
+                    chunk_results = await processor.process_image_batch(
+                        images,
+                        progress_callback=progress_callback
+                    )
+                    
+                    # Merge results
+                    results.update(chunk_results)
+                    
+                    # Clean up images to free memory
+                    for _, img in images:
+                        img.close()
+                    
+                    logger.info(f"Completed chunk {chunk_idx + 1}/{len(page_chunks)}")
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Batch Vision processing failed: {str(e)}")
+            return results  # Return partial results if available
+    
+    @staticmethod
+    async def process_pdf_with_vision_parallel(
+        pdf_path: str,
+        start_page: int = 1,
+        end_page: Optional[int] = None,
+        ocr_threshold: float = 0.1,
+        progress_callback = None
+    ) -> str:
+        """
+        Process PDF with parallel Vision OCR for pages that need it.
+        
+        Args:
+            pdf_path: Path to the PDF file
+            start_page: Starting page (1-indexed)
+            end_page: Ending page (1-indexed), None for all pages
+            ocr_threshold: Minimum text density to skip OCR
+            progress_callback: Optional async callback for progress
+            
+        Returns:
+            Extracted text from all pages
+        """
+        try:
+            # First, identify which pages need OCR
+            pages_needing_ocr = []
+            all_text = {}
+            
+            # Get total pages
+            with fitz.open(pdf_path) as pdf_doc:
+                total_pages = len(pdf_doc)
+                if end_page is None:
+                    end_page = total_pages
+                
+                # Quick scan to identify pages needing OCR
+                for page_num in range(start_page - 1, min(end_page, total_pages)):
+                    page = pdf_doc[page_num]
+                    text = page.get_text()
+                    
+                    # Check if page needs OCR (low text content)
+                    if len(text.strip()) < 50:  # Less than 50 chars indicates image-based page
+                        pages_needing_ocr.append(page_num + 1)  # Convert to 1-indexed
+                        logger.info(f"Page {page_num + 1} marked for Vision OCR")
+                    else:
+                        # Store text for pages that don't need OCR
+                        all_text[page_num + 1] = text
+            
+            # Process pages needing OCR in parallel
+            if pages_needing_ocr:
+                logger.info(f"Processing {len(pages_needing_ocr)} pages with Vision OCR in parallel")
+                ocr_results = await PDFService.extract_text_with_vision_batch(
+                    pdf_path,
+                    pages_needing_ocr,
+                    progress_callback=progress_callback
+                )
+                
+                # Merge OCR results
+                all_text.update(ocr_results)
+            
+            # Sort by page number and combine
+            sorted_pages = sorted(all_text.keys())
+            combined_text = []
+            
+            for page_num in sorted_pages:
+                text = all_text.get(page_num, "")
+                if text:
+                    combined_text.append(f"--- Page {page_num} ---\n{text}")
+            
+            return "\n\n".join(combined_text)
+            
+        except Exception as e:
+            logger.error(f"Parallel PDF processing failed: {str(e)}")
+            # Fall back to sequential processing
+            return PDFService.extract_text_from_pages(
+                pdf_path, start_page, end_page, ocr_fallback=True
+            )
+    
+    @staticmethod
+    async def extract_text_from_pages_async(
+        pdf_path: str,
+        start_page: int,
+        end_page: int,
+        use_batch_vision: bool = True,
+        ocr_fallback: bool = True,
+        progress_callback = None
+    ) -> str:
+        """
+        Async version of extract_text_from_pages with batch Vision processing.
+        
+        Args:
+            pdf_path: Path to the PDF file
+            start_page: Starting page (1-indexed)
+            end_page: Ending page (1-indexed)
+            use_batch_vision: Use batch Vision processing for better performance
+            ocr_fallback: Whether to use Vision OCR for image pages
+            progress_callback: Optional callback for progress updates
+            
+        Returns:
+            Extracted text from the PDF
+        """
+        if use_batch_vision and ocr_fallback:
+            # Use parallel Vision processing
+            return await PDFService.process_pdf_with_vision_parallel(
+                pdf_path,
+                start_page,
+                end_page,
+                progress_callback=progress_callback
+            )
+        else:
+            # Use traditional synchronous extraction
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor() as executor:
+                result = await loop.run_in_executor(
+                    executor,
+                    PDFService.extract_text_from_pages,
+                    pdf_path,
+                    start_page,
+                    end_page,
+                    ocr_fallback
+                )
+            return result
     
     def extract_pages_as_pdf(self, pdf_path: str, start_page: int, end_page: int) -> bytes:
         """
