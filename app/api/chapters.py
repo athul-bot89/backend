@@ -3,7 +3,7 @@ API endpoints for chapter management.
 Handles chapter detection, creation, and content extraction.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import os
@@ -651,13 +651,16 @@ def generate_chapter_summary(
 def generate_chapter_worksheet(
     chapter_id: int,
     num_questions: Optional[int] = 10,
+    regenerate: bool = Query(False, description="Force regeneration of worksheet even if cached"),
     db: Session = Depends(get_db)
 ):
     """
     Generate a worksheet with questions for a chapter.
+    Returns cached worksheet if exists, unless regenerate=true.
     
     - **chapter_id**: ID of the chapter to generate questions from
     - **num_questions**: Number of questions to generate (default 10, max 20)
+    - **regenerate**: Force regeneration of worksheet (default: false)
     """
     # Limit the number of questions
     if num_questions > 20:
@@ -672,6 +675,42 @@ def generate_chapter_worksheet(
     
     if not chapter.extracted_text:
         raise HTTPException(status_code=400, detail="Chapter text not extracted yet")
+    
+    # Import database operations
+    from app.database.database import (
+        get_worksheet_by_chapter_id,
+        create_worksheet,
+        update_worksheet
+    )
+    import json
+    
+    # Check if worksheet exists and regenerate flag is not set
+    if not regenerate:
+        existing_worksheet = get_worksheet_by_chapter_id(db, chapter_id)
+        if existing_worksheet:
+            # Parse stored worksheet and return it
+            try:
+                stored_questions = json.loads(existing_worksheet.content)
+                questions = [
+                    WorksheetQuestion(
+                        question=q["question"],
+                        question_type=q["question_type"],
+                        options=q.get("options"),
+                        correct_answer=q.get("correct_answer"),
+                        difficulty=q.get("difficulty", "medium")
+                    )
+                    for q in stored_questions
+                ]
+                
+                return WorksheetResponse(
+                    chapter_id=chapter.id,
+                    chapter_title=chapter.title,
+                    total_questions=len(questions),
+                    questions=questions
+                )
+            except json.JSONDecodeError:
+                # If stored content is corrupted, regenerate
+                pass
     
     ai_service = AIService()
     
@@ -695,8 +734,29 @@ def generate_chapter_worksheet(
             for q in questions_data
         ]
         
-        # Store the worksheet in database (optional - you can add a Worksheet model later)
-        # For now, we'll just return the generated worksheet
+        # Store or update the worksheet in database
+        worksheet_title = f"Worksheet for {chapter.title}"
+        worksheet_content = json.dumps(questions_data, ensure_ascii=False)
+        
+        existing_worksheet = get_worksheet_by_chapter_id(db, chapter_id)
+        if existing_worksheet:
+            # Update existing worksheet
+            update_worksheet(
+                db,
+                chapter_id=chapter_id,
+                content=worksheet_content,
+                title=worksheet_title,
+                difficulty_level="mixed"  # Since we generate mixed difficulty questions
+            )
+        else:
+            # Create new worksheet
+            create_worksheet(
+                db,
+                chapter_id=chapter_id,
+                title=worksheet_title,
+                content=worksheet_content,
+                difficulty_level="mixed"
+            )
         
         return WorksheetResponse(
             chapter_id=chapter.id,
@@ -707,6 +767,29 @@ def generate_chapter_worksheet(
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate worksheet: {str(e)}")
+
+@router.delete("/{chapter_id}/worksheet")
+def delete_chapter_worksheet(
+    chapter_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Delete the cached worksheet for a chapter.
+    Forces regeneration on next request.
+    
+    - **chapter_id**: ID of the chapter whose worksheet to delete
+    """
+    from app.database.database import delete_worksheet_by_chapter_id
+    
+    chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
+    if not chapter:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+    
+    deleted = delete_worksheet_by_chapter_id(db, chapter_id)
+    if deleted:
+        return {"message": f"Worksheet for chapter '{chapter.title}' has been deleted"}
+    else:
+        return {"message": f"No worksheet found for chapter '{chapter.title}'"}
 
 @router.post("/{chapter_id}/ask-question", response_model=ChapterAnswerResponse)
 def ask_chapter_question(

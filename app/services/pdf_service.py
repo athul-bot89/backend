@@ -9,16 +9,17 @@ import os
 import re
 import logging
 from pathlib import Path
+from PIL import Image
+from io import BytesIO
 
 # Set up logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 try:
     from pdf2image import convert_from_path
-    import pytesseract
-    OCR_AVAILABLE = True
+    PDF2IMAGE_AVAILABLE = True
 except ImportError:
-    OCR_AVAILABLE = False
+    PDF2IMAGE_AVAILABLE = False
 
 try:
     import pdfplumber
@@ -148,13 +149,13 @@ class PDFService:
                                 ocr_fallback: bool = True, ocr_language: str = "eng+hin+tam+tel+kan+mal+mar+guj+ben+pan+ori",
                                 ocr_dpi: int = 300, ocr_config: str = None) -> str:
         """
-        Extract text from specified page range in a PDF with OCR fallback for image-based pages.
+        Extract text from specified page range in a PDF with OpenAI Vision API OCR fallback for image-based pages.
         
         Args:
             pdf_path: Path to the PDF file
             start_page: Starting page number (1-based)
             end_page: Ending page number (1-based, inclusive)
-            ocr_fallback: Whether to use OCR for pages with no text (default: True)
+            ocr_fallback: Whether to use OpenAI Vision API OCR for pages with no text (default: True)
             ocr_language: Language(s) for OCR recognition. Can be single language (e.g., "eng") 
                          or multiple languages separated by + (e.g., "eng+hin+tam")
                          Default includes English and major Indian languages:
@@ -180,7 +181,7 @@ class PDFService:
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
                 # Pre-check if PDF needs OCR (optional optimization)
         # This helps us log upfront whether OCR will likely be needed
-        if ocr_fallback and OCR_AVAILABLE:
+        if ocr_fallback and PDF2IMAGE_AVAILABLE:
             # Sample a few pages from the range to check
             sample_pages = []
             if end_page - start_page + 1 <= 3:
@@ -290,7 +291,7 @@ class PDFService:
                         )
                         
                         # If text exists but seems insufficient and page has images, try OCR anyway
-                        if not text_is_meaningful and has_images and ocr_fallback and OCR_AVAILABLE:
+                        if not text_is_meaningful and has_images and ocr_fallback and PDF2IMAGE_AVAILABLE:
                             # Mark that we should try OCR
                             logger.info(f"Page {page_label}: Extracted text seems minimal ({len(stripped_text)} chars) with images present, will attempt OCR")
                             text = ""
@@ -300,50 +301,22 @@ class PDFService:
                     if text.strip() and text_is_meaningful:
                         # Text extraction worked and is meaningful
                         extracted_text.append(f"--- Page {page_label} ({extraction_method}) ---\n{text}")
-                    elif ocr_fallback and OCR_AVAILABLE:
-                        # Try OCR fallback for image-based pages
-                        logger.info(f"Page {page_label}: No meaningful text extracted, attempting OCR...")
-                        try:
-                            # Convert only the specific page to image
-                            images = convert_from_path(
-                                pdf_path,
-                                first_page=page_label,
-                                last_page=page_label,
-                                dpi=ocr_dpi
-                            )
-                            
-                            if images:
-                                # Run OCR on the page image with language support
-                                # Use custom config for better Indian language recognition
-                                config = ocr_config or "--oem 3 --psm 6"
-                                ocr_text = pytesseract.image_to_string(
-                                    images[0],
-                                    lang=ocr_language,
-                                    config=config
-                                )
-                                
-                                if ocr_text.strip():
-                                    logger.info(f"Page {page_label}: OCR successful, extracted {len(ocr_text)} characters")
-                                    extracted_text.append(f"--- Page {page_label} (OCR) ---\n{ocr_text}")
-                                else:
-                                    # OCR didn't find any text
-                                    logger.warning(f"Page {page_label}: OCR completed but no text found")
-                                    extracted_text.append(f"--- Page {page_label} (OCR - no text found) ---\n")
-                            else:
-                                extracted_text.append(f"--- Page {page_label} (OCR - conversion failed) ---\n")
-                        
-                        except Exception as ocr_error:
-                            # OCR failed, add error note
-                            logger.error(f"Page {page_label}: OCR failed - {str(ocr_error)}")
-                            extracted_text.append(
-                                f"--- Page {page_label} (OCR failed: {str(ocr_error)}) ---\n"
-                            )
-                    elif ocr_fallback and not OCR_AVAILABLE:
-                        # OCR requested but libraries not available
-                        extracted_text.append(
-                            f"--- Page {page_label} (text - empty, OCR unavailable) ---\n"
-                            f"Note: Install 'pdf2image' and 'pytesseract' for OCR support\n"
+                    elif ocr_fallback:
+                        # Try OpenAI Vision API for OCR
+                        logger.info(f"Page {page_label}: No meaningful text extracted, attempting OCR with OpenAI Vision...")
+                        ocr_text = self.extract_text_with_vision(
+                            pdf_path=pdf_path,
+                            page_number=page_label,
+                            dpi=ocr_dpi
                         )
+                        
+                        if ocr_text:
+                            logger.info(f"Page {page_label}: Vision API OCR successful, extracted {len(ocr_text)} characters")
+                            extracted_text.append(f"--- Page {page_label} (Vision OCR) ---\n{ocr_text}")
+                        else:
+                            # Vision OCR didn't find any text or failed
+                            logger.warning(f"Page {page_label}: Vision API OCR completed but no text found")
+                            extracted_text.append(f"--- Page {page_label} (Vision OCR - no text found) ---\n")
                     else:
                         # No text and OCR disabled
                         extracted_text.append(f"--- Page {page_label} (text - empty) ---\n")
@@ -506,6 +479,57 @@ class PDFService:
         
         except Exception as e:
             raise Exception(f"Error getting page info: {str(e)}")
+    
+    def extract_text_with_vision(self, pdf_path: str, page_number: int, dpi: int = 300) -> str:
+        """
+        Extract text from a PDF page using OpenAI Vision API.
+        
+        Args:
+            pdf_path: Path to the PDF file
+            page_number: Page number to extract (1-indexed)
+            dpi: DPI for image conversion (default 300)
+            
+        Returns:
+            Extracted text from the page, or empty string if failed
+        """
+        try:
+            # First check if pdf2image is available for conversion
+            if not PDF2IMAGE_AVAILABLE:
+                logger.error("pdf2image library not available for Vision OCR")
+                return ""
+            
+            # Import AI service here to avoid circular dependencies
+            from app.services.ai_service import AIService
+            
+            # Convert the specific page to image
+            try:
+                images = convert_from_path(
+                    pdf_path,
+                    first_page=page_number,
+                    last_page=page_number,
+                    dpi=dpi
+                )
+                
+                if not images:
+                    logger.error(f"Failed to convert page {page_number} to image")
+                    return ""
+                
+                # Get the page image
+                page_image = images[0]
+                
+                # Initialize AI service and process with Vision API
+                ai_service = AIService()
+                extracted_text = ai_service.process_image_with_vision(page_image)
+                
+                return extracted_text
+                
+            except Exception as conv_error:
+                logger.error(f"Error converting page {page_number} to image: {str(conv_error)}")
+                return ""
+                
+        except Exception as e:
+            logger.error(f"Vision API OCR failed for page {page_number}: {str(e)}")
+            return ""
     
     def extract_pages_as_pdf(self, pdf_path: str, start_page: int, end_page: int) -> bytes:
         """
